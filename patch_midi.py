@@ -217,9 +217,11 @@ def main() -> None:
     parser.add_argument("video_pianoroll", type=Path,
                         help=".pkl from ppan.evaluate.evaluate_on_dataset, or a .mid")
     parser.add_argument("output_midi", type=Path)
-    parser.add_argument("--visible-keys", type=int, nargs=2, required=True,
+    parser.add_argument("--visible-keys", type=int, nargs=2,
+                        default=[LOWEST_PITCH, HIGHEST_PITCH],
                         metavar=("LOW", "HIGH"),
-                        help="MIDI pitch range visible in the video's camera crop")
+                        help="MIDI pitch range visible in the video's camera crop "
+                             f"(default: {LOWEST_PITCH} {HIGHEST_PITCH}, full 88 keys)")
     parser.add_argument("--offset", type=float, default=None,
                         help="Manual video-vs-audio offset in seconds; "
                              "skips auto-alignment if given")
