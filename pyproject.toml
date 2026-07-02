@@ -5,5 +5,12 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "numpy>=2.5.0",
+    "pretty-midi>=0.2.11",
     "requests>=2.32.5",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
 ]
