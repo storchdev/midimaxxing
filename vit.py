@@ -43,9 +43,8 @@ We also download the video on which we perform inference as well as all model we
 import os
 from pathlib import Path
 from typing import Optional
-import pickle
-import copy
 import glob
+import sys
 
 from IPython.display import Audio, clear_output
 
@@ -112,17 +111,65 @@ threshold_frame: float = 0.5
 gaussian_sigma_onsets: float = 0.2
 gaussian_sigma_frames: float = 0.8
 
-# The files we would like to process with their bounding boxes. Each position in
-# these two lists corresponds to one video. E.g. with one video each list has
-# length one where the data in the first entry corresponds to the same video.
-video_files = ["./videos/ex1.mp4"]
-bounding_boxes = [
-    {"rot_angle": 0,
-     "x1": 519,
-     "y1": 631,
-     "x2": 1373,
-     "y2": 722}
-    ]
+# The files we would like to process with their bounding boxes.
+# Usage:
+#   python vit.py                          → demo video with hardcoded crop
+#   python vit.py video.mp4               → interactive crop picker
+#   python vit.py video.mp4 x1,y1,x2,y2  → use provided crop directly
+
+_DEMO_BB = {"rot_angle": 0, "x1": 519, "y1": 631, "x2": 1373, "y2": 722}
+
+_PICKER_SCRIPT = '''
+import sys, json
+import av
+import numpy as np
+import matplotlib
+matplotlib.use("TkAgg")
+import matplotlib.pyplot as plt
+
+path = sys.argv[1]
+container = av.open(path)
+vs = container.streams.video[0]
+container.seek(vs.duration // 2, stream=vs)
+frame = next(container.decode(video=0))
+img = frame.to_ndarray(format="rgb24")
+
+fig, ax = plt.subplots(figsize=(14, 8))
+ax.imshow(img)
+ax.set_title(f"Click TOP-LEFT then BOTTOM-RIGHT of the piano keys  ({img.shape[1]}x{img.shape[0]})")
+plt.tight_layout()
+pts = plt.ginput(2, timeout=-1)
+plt.close("all")
+x1 = int(min(pts[0][0], pts[1][0]))
+y1 = int(min(pts[0][1], pts[1][1]))
+x2 = int(max(pts[0][0], pts[1][0]))
+y2 = int(max(pts[0][1], pts[1][1]))
+print(json.dumps({"x1": x1, "y1": y1, "x2": x2, "y2": y2}))
+'''
+
+def _pick_bbox_interactive(video_path: str) -> dict:
+    import json
+    result = subprocess.run(
+        [sys.executable, "-c", _PICKER_SCRIPT, video_path],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Picker failed:\n{result.stderr.decode()}")
+    coords = json.loads(result.stdout.decode().strip().split("\n")[-1])
+    print(f"Bounding box: x1={coords['x1']}, y1={coords['y1']}, x2={coords['x2']}, y2={coords['y2']}")
+    return {"rot_angle": 0, **coords}
+
+_args = sys.argv[1:]
+if not _args:
+    video_files = ["./videos/ex1.mp4"]
+    bounding_boxes = [_DEMO_BB]
+elif len(_args) == 1:
+    video_files = [_args[0]]
+    bounding_boxes = [_pick_bbox_interactive(_args[0])]
+else:
+    video_files = [_args[0]]
+    x1, y1, x2, y2 = map(int, _args[1].split(","))
+    bounding_boxes = [{"rot_angle": 0, "x1": x1, "y1": y1, "x2": x2, "y2": y2}]
 
 # Commented out IPython magic to ensure Python compatibility.
 # If the MIDI and wav output directories don't exist we create them:
@@ -218,9 +265,11 @@ We generate pianorolls for both onsets and frames, as well as only frames.
 Because the model always predicts both onsets and frames during the forward pass, we only need to generate one set of predictions to get all the data we need.
 """
 
+dataset_name = Path(video_files[0]).stem
+
 pianoroll_onf, ds_sample = evaluate_on_dataset(
     samples=samples,
-    dataset_name="r3s",
+    dataset_name=dataset_name,
     model_checkpoint=model_checkpoint,
     greyscale=True,
     batch_size=6,
@@ -230,12 +279,9 @@ pianoroll_onf, ds_sample = evaluate_on_dataset(
     threshold_onset=threshold_onset,
     frame_only=False
 )
-# Model predictions are cached so running a second time should not take long.
-# To force the recalculation of predictions, delete the r3s_preds.pkl and
-# r3s_cache.txt files in the working directory of the notebook.
 pianoroll_frames_only, _ = evaluate_on_dataset(
     samples=samples,
-    dataset_name="r3s",
+    dataset_name=dataset_name,
     model_checkpoint=model_checkpoint,
     greyscale=True,
     batch_size=6,
