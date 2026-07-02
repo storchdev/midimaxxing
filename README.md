@@ -2,8 +2,8 @@
 
 Transcribe piano video/audio to MIDI. Combines two transcription approaches:
 
-- **Audio** — ByteDance's [piano-transcription](https://replicate.com/bytedance/piano-transcription) model running in Docker. Accurate onsets, pitches, and velocities.
-- **Visual** — A vision transformer (ViT) that watches which keys are physically pressed frame-by-frame.
+- **Audio** — ByteDance's [piano-transcription](https://github.com/bytedance/piano_transcription) model running in Docker ([Replicate image](https://replicate.com/bytedance/piano-transcription), [paper](https://arxiv.org/pdf/2010.01815)). Accurate onsets, pitches, and velocities.
+- **Visual** — A vision transformer (ViT) that watches which keys are physically pressed frame-by-frame ([ONF-VPT](https://chromeilion.github.io/onf_vpt/), [paper](https://arxiv.org/pdf/2411.09037v2)).
 
 The two outputs are merged by `patch_midi.py`: onsets and velocities come from the audio model, but note releases are shortened wherever the video shows the finger has already lifted. The key release cue cannot come from audio alone because pedal can sustain notes after the player has let go of the key. Therefore we use a visual cue. The result matches what a player piano or Synthesia roll would show.
 
