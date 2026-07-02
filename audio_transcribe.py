@@ -2,15 +2,19 @@ import base64
 import subprocess
 import sys
 import threading
+from pathlib import Path
 
 import requests
 
 # --- CONFIGURATION ---
 INPUT_FILE = sys.argv[1]
-OUTPUT_FILENAME = "transcription.mid"
+_stem = Path(INPUT_FILE).stem
+OUTPUT_FILENAME = sys.argv[2] if len(sys.argv) > 2 else f"midi/{_stem}_audio.mid"
 CONTAINER_NAME = "piano-worker"  # Ensure this matches your --name
 API_URL = "http://localhost:5000/predictions"
 TRIGGER_PHRASE = "Write out to transcription.mid"
+
+Path(OUTPUT_FILENAME).parent.mkdir(parents=True, exist_ok=True)
 
 # 1. Prepare Audio
 print(f"Loading {INPUT_FILE}...")

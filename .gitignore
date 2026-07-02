@@ -13,3 +13,13 @@ wheels/
 *.mp4
 *.mid
 .ruff_cache/
+
+# inference outputs and downloaded assets
+bounding_boxes.png
+output.mp3
+midi/
+preds_wav/
+weights/
+videos/
+r3s_cache.txt
+r3s_preds.pkl
