@@ -9,6 +9,21 @@ The two outputs are merged by `patch_midi.py`: onsets and velocities come from t
 
 If you want the MIDI to sound as close to the original recording as possible (sustain and all), use audio-only. If you want releases that match the physical key presses like in standard midi/Synthesia recordings, use the full pipeline.
 
+## Requirements
+
+**Platform:** Linux or WSL2. NVIDIA DALI (used for visual inference) does not support Windows or macOS natively.
+
+**Software:** [Docker](https://docs.docker.com/engine/install/) with the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html), [uv](https://github.com/astral-sh/uv).
+
+**Hardware:**
+
+| Mode | Requirement |
+|---|---|
+| Full pipeline | NVIDIA GPU — audio container uses `--gpus=all`, visual inference requires CUDA via NVIDIA DALI |
+| Audio-only | NVIDIA GPU for the Docker container; no GPU needed on the host beyond that |
+
+NVENC is used automatically for the 180° flip step if available, but is not required.
+
 ## Quick start
 
 ```bash
