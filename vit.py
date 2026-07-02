@@ -43,16 +43,12 @@ We also download the video on which we perform inference as well as all model we
 import os
 from pathlib import Path
 from typing import Optional
-import glob
 import sys
-
-from IPython.display import Audio, clear_output
 
 import subprocess
 
 try:
     import pretty_midi
-    from scipy import io
     import matplotlib
     matplotlib.use('Agg')
     from matplotlib import animation
@@ -97,9 +93,6 @@ These parameters can all be set in the ```video_files``` and ```bounding_boxes``
 ## Whether to rotate the video 180 degrees, not needed for samples from R3
 rotate_180: Optional[bool] = False
 
-# Output settings
-## Directories to output generated MIDI and WAV files to.
-wav_output_dir: PathLike = "./preds_wav"
 
 # Model settings
 model_checkpoint: PathLike = "./weights"
@@ -170,11 +163,6 @@ else:
     video_files = [_args[0]]
     x1, y1, x2, y2 = map(int, _args[1].split(","))
     bounding_boxes = [{"rot_angle": 0, "x1": x1, "y1": y1, "x2": x2, "y2": y2}]
-
-# Commented out IPython magic to ensure Python compatibility.
-# If the MIDI and wav output directories don't exist we create them:
-wav_output_dir = Path(wav_output_dir)
-wav_output_dir.mkdir(exist_ok=True)
 
 # For plotting animations.
 # %matplotlib inline
@@ -346,53 +334,5 @@ ax[1].set_ylabel("Note Number")
 ax[1].set_xlabel("Time Step")
 fig.suptitle("Pianoroll Predictions");
 
-"""We can see that when using only frames there are more notes being predicted overall because we do not reject any notes like in the onsets and frames approach.
-Many notes are also shorter when using both onsets and frames because the onset prediction can cause a note to start later than the frames may have predicted. The gaussian smoothing and thresholding process also behaves slightly differently between the two.
-
-## Saving to MP3
-Here we define a helper function that saves our predictions to a WAV file.
-"""
-
-def midi_to_wav(midi_file: Path,
-                output_wav: Path) -> None:
-    """
-    Convert a MIDI file to a wav file.
-
-    Parameters
-    ----------
-    midi_file : Path
-    output_wav : Path
-    """
-    pm = pretty_midi.PrettyMIDI(str(midi_file))
-    waveform = pm.fluidsynth(fs=44100)
-    io.wavfile.write(output_wav, 44100, waveform)
-
-"""## Generating Audio Files
-
-With our helper functions we can iterate through our model predictions
-and generate audio files.
-"""
-
-# Iterate through all videos and their predictions.
-for midi_file in glob.glob("./midi/*.mid"):
-    midi_to_wav(
-        midi_file=midi_file,
-        output_wav=wav_output_dir/(Path(midi_file).stem + ".wav")
-    )
-
-"""## Conclusion
-With that we're done!
-You can listen to a generated audio file below.
-"""
-
-# Pick an audio file from those in the audio file folder.
-first_audio_file = str((wav_output_dir/os.listdir(wav_output_dir)[0]).absolute())
-
-# We need to convert the WAV file to an MP3 so that it can be played in the
-# browser.
-subprocess.run(["ffmpeg", "-y", "-i", first_audio_file, "-vn", "-ar", "44100",
-                "-ac", "2", "-b:a", "192k", "output.mp3"], check=False)
-clear_output()
-
-print("Done. Audio saved to output.mp3")
+print("Done.")
 
