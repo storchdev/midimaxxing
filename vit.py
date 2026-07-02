@@ -54,6 +54,8 @@ import subprocess
 try:
     import pretty_midi
     from scipy import io
+    import matplotlib
+    matplotlib.use('Agg')
     from matplotlib import animation
     from matplotlib import rc
     import matplotlib.pyplot as plt
@@ -72,26 +74,10 @@ try:
     from timm.data.constants import IMAGENET_DEFAULT_STD, IMAGENET_DEFAULT_MEAN
 
 except ImportError as f:
-    !sudo apt install -y fluidsynth fluid-soundfont-gm
-    !pip install pretty_midi
-    !pip install av==14.1.0
-    !pip install gdown
-    !pip install pyfluidsynth
-    !mkdir videos
-    !mkdir weights
-    !gdown -O ./weights/pytorch_model.bin "https://drive.google.com/uc?id=1GjY_DU0TH9xKBY0ilvPvDdqksqxozCY6"
-    !gdown -O ./weights/config.json "https://drive.google.com/uc?&id=1Y_MToU0feQc1y7DdKh7Ym7Yf3slNrABJ"
-    !wget -O ./videos/ex1.mp4 "https://drive.google.com/uc?export=download&id=1Sgy128FdOvPYr0HctCldgxvdr3ajRDuR"
-    !wget -O package "https://github.com/Chromeilion/ppan/archive/refs/heads/minimal-eval.zip"
-    !rm -r infer_utils
-    !mkdir infer_utils
-    !unzip package -d infer_utils
-    !pip install ./infer_utils/ppan-minimal-eval/
-    !cd ..
-
-    clear_output()
-    # Kill the runtime to force a restart and load all new packages.
-    os.kill(os.getpid(), 9)
+    raise RuntimeError(
+        "Missing dependencies. Run: uv sync && uv add nvidia-dali-cuda120 "
+        "\"ppan @ git+https://github.com/Chromeilion/ppan@minimal-eval\""
+    ) from f
 
 # Useful for typing
 PathLike = str | os.PathLike
@@ -199,31 +185,28 @@ samples = prepare_data(video_files, bounding_boxes)
 
 """It is informative to see what the bounding boxes look like."""
 
-def visualize_bbs(samples):
-    """Visualize bounding boxes on up to 4 videos.
-    """
+def visualize_bbs(samples, output_path="bounding_boxes.png"):
+    """Visualize bounding boxes on up to 4 videos."""
+    import av
     no_plots = min(len(samples), 4)
     results = []
-    for idx, sample in enumerate(samples[:no_plots]):
-        stream = "video"
+    for sample in samples[:no_plots]:
         print(sample.video_path)
-        video = torchvision.io.VideoReader(sample.video_path, stream)
-        halfway = video.get_metadata()["video"]["duration"][0] / 2
-        frame = next(video.seek(halfway))['data'].detach()
+        container = av.open(sample.video_path)
+        video_stream = container.streams.video[0]
+        duration = float(video_stream.duration * video_stream.time_base)
+        container.seek(int(duration / 2 / float(video_stream.time_base)))
+        frame = next(container.decode(video=0))
+        img = torch.from_numpy(frame.to_ndarray(format="rgb24")).permute(2, 0, 1)
         bb = sample.bounding_box
-        bb = torch.tensor([[bb[2], bb[0], bb[3], bb[1]]])
-        results.append(
-            draw_bounding_boxes(
-                frame,
-                boxes=bb,
-                width=4,
-                colors="red"
-            )
-        )
+        bb = torch.tensor([[bb[2], bb[0], bb[3], bb[1]]], dtype=torch.float32)
+        results.append(draw_bounding_boxes(img, boxes=bb, width=4, colors="red"))
     show(results)
+    plt.savefig(output_path, bbox_inches="tight")
+    print(f"Saved to {output_path}")
 
 # Let's also visualize the bounding boxes:
-visualize_bbs(samples=samples);
+visualize_bbs(samples=samples)
 
 """## Inference
 
@@ -361,8 +344,9 @@ first_audio_file = str((wav_output_dir/os.listdir(wav_output_dir)[0]).absolute()
 
 # We need to convert the WAV file to an MP3 so that it can be played in the
 # browser.
-!ffmpeg -y -i $first_audio_file -vn -ar 44100 -ac 2 -b:a 192k output.mp3
+subprocess.run(["ffmpeg", "-y", "-i", first_audio_file, "-vn", "-ar", "44100",
+                "-ac", "2", "-b:a", "192k", "output.mp3"], check=False)
 clear_output()
 
-Audio("output.mp3")
+print("Done. Audio saved to output.mp3")
 
