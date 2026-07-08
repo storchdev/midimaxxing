@@ -52,22 +52,32 @@ python transcribe.py --audio-only video.mp4                   # audio transcript
 python transcribe.py --hands top video.mp4 --patch-args --offset 0.5
 ```
 
-**Full pipeline** produces `midi/<stem>_final.mid` via three steps:
+**Full pipeline** produces `midi/<stem>_final.mid`:
 1. Audio transcription → `midi/<stem>_audio.mid`
-2. Visual inference → `midi/<stem>.pkl` (per-frame key predictions)
-3. MIDI patching → `midi/<stem>_final.mid`
+2. Keyboard geometry (interactive, cached) → `midi/<stem>_keyboard.json` (skipped with `--no-prune`)
+3. Visual inference → `midi/<stem>.pkl`, `midi/<stem>_video.mid`
+4. Pruning: drop audio-hallucinated notes no hand could reach → `midi/<stem>_pruned.mid` (skipped with `--no-prune`)
+5. MIDI patching → `midi/<stem>_final.mid`
 
 **Audio-only** produces `midi/<stem>.mid` directly. No GPU or visual dependencies needed beyond `requests`.
 
 ### --hands
 
-Use `--hands top` if the player's hands are at the top of the frame, or `--hands bottom` if they're at the bottom (player POV, synthesia style). The visual model requires hands at the top; `--hands bottom` rotates the video 180° before inference and cleans up the temp file automatically. The bbox picker (if used) opens on the already-flipped frame, so the crop coordinates you click will be correct.
+Use `--hands top` if the player's hands are at the top of the frame, or `--hands bottom` if they're at the bottom (player POV, synthesia style). The visual model requires hands at the top; `--hands bottom` rotates the video 180° before inference and cleans up the temp file automatically. The keyboard picker always displays the frame hands-bottom for annotation regardless of `--hands`, so the picture never looks upside-down.
 
 `--hands` is required for the full pipeline so you don't silently get wrong predictions.
 
 ### bbox
 
-The bbox is the pixel crop of the piano keys in the video frame (`x1,y1,x2,y2`). If omitted, an interactive picker opens so you can click the two corners.
+The bbox is the pixel crop of the piano keys in the video frame (`x1,y1,x2,y2`). If omitted, an interactive picker opens so you can click the two corners (plus, when pruning is enabled, the left edge of every C key in `--keyboard-range`).
+
+### Pruning unreachable notes
+
+The full pipeline runs a hand-reachability pruning pass by default: a YOLO hand-detection model tracks both hands across the video, and any audio-transcribed note whose key no hand was near at its onset gets dropped before patching. This catches notes the audio model hallucinated outright (patching can only shorten notes, never remove them).
+
+The keyboard picker collects `--keyboard-range LOW HIGH` (default `A0 C8`, full 88-key) as note names, plus the left edge of every C key, so key positions can be interpolated from pixel coordinates. Geometry is cached to `midi/<stem>_keyboard.json` — delete it to re-annotate.
+
+Relevant flags: `--no-prune` (skip pruning entirely, matching pre-pruning behavior), `--keyboard-range LOW HIGH`, `--num-hands`, `--max-disappear-frames` (how many frames a hand can vanish from YOLO and still be interpolated), `--reach-margin-px`, `--yolo-conf`, `--max-match-distance-px`, `--prune-args` (forwarded to `prune_midi.py`).
 
 ## Other scripts
 
@@ -76,5 +86,9 @@ The bbox is the pixel crop of the piano keys in the video frame (`x1,y1,x2,y2`).
 | `rundocker.sh` | Starts the ByteDance transcription container. Run once; leave it running. |
 | `audio_transcribe.py` | Audio → MIDI via the Docker container. Called by `transcribe.py` but works standalone: `python audio_transcribe.py input.mp4 [output.mid]` |
 | `vit.py` | Video → per-frame pianoroll via ViT. Saves `midi/<stem>.pkl` and `midi/<stem>_video.mid`. Usage same as transcribe.py sans `--audio-only`. |
+| `keyboard_picker.py` | Interactive GUI for the keyboard bbox + C-key markers. `python keyboard_picker.py video.mp4 --hands top`. |
+| `keyboard_geometry.py` | Pure note-name/pixel-geometry math used by the picker and `prune_midi.py`. |
+| `hand_tracker.py` | YOLO hand detection + multi-hand tracking across frames. |
+| `prune_midi.py` | Drops audio-transcribed notes unreachable by any tracked hand. Run `python prune_midi.py --help` for options. |
 | `patch_midi.py` | Merges audio MIDI with video pianoroll. Run `python patch_midi.py --help` for options. |
 | `flip180.sh` | Rotates a video 180° for recordings where the camera is upside-down. |
