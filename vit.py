@@ -112,45 +112,12 @@ gaussian_sigma_frames: float = 0.8
 
 _DEMO_BB = {"rot_angle": 0, "x1": 519, "y1": 631, "x2": 1373, "y2": 722}
 
-_PICKER_SCRIPT = '''
-import sys, json
-import av
-import numpy as np
-import matplotlib
-matplotlib.use("TkAgg")
-import matplotlib.pyplot as plt
-
-path = sys.argv[1]
-container = av.open(path)
-vs = container.streams.video[0]
-container.seek(vs.duration // 2, stream=vs)
-frame = next(container.decode(video=0))
-img = frame.to_ndarray(format="rgb24")
-
-fig, ax = plt.subplots(figsize=(14, 8))
-ax.imshow(img)
-ax.set_title(f"Click TOP-LEFT then BOTTOM-RIGHT of the piano keys  ({img.shape[1]}x{img.shape[0]})")
-plt.tight_layout()
-pts = plt.ginput(2, timeout=-1)
-plt.close("all")
-x1 = int(min(pts[0][0], pts[1][0]))
-y1 = int(min(pts[0][1], pts[1][1]))
-x2 = int(max(pts[0][0], pts[1][0]))
-y2 = int(max(pts[0][1], pts[1][1]))
-print(json.dumps({"x1": x1, "y1": y1, "x2": x2, "y2": y2}))
-'''
 
 def _pick_bbox_interactive(video_path: str) -> dict:
-    import json
-    result = subprocess.run(
-        [sys.executable, "-c", _PICKER_SCRIPT, video_path],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"Picker failed:\n{result.stderr.decode()}")
-    coords = json.loads(result.stdout.decode().strip().split("\n")[-1])
-    print(f"Bounding box: x1={coords['x1']}, y1={coords['y1']}, x2={coords['x2']}, y2={coords['y2']}")
-    return {"rot_angle": 0, **coords}
+    from keyboard_picker import pick_bbox_only
+    x1, y1, x2, y2 = pick_bbox_only(video_path)
+    print(f"Bounding box: x1={x1}, y1={y1}, x2={x2}, y2={y2}")
+    return {"rot_angle": 0, "x1": x1, "y1": y1, "x2": x2, "y2": y2}
 
 _args = sys.argv[1:]
 if not _args:
