@@ -27,4 +27,9 @@ dev = [
 ]
 
 [tool.uv.sources]
-ppan = { path = "vendor_ppan" }
+ppan = { workspace = true, editable = true }
+
+[tool.uv.workspace]
+members = [
+    "vendor_ppan",
+]
