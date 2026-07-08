@@ -17,6 +17,7 @@ from typing import Literal
 import numpy as np
 import requests
 from scipy.optimize import linear_sum_assignment
+from tqdm import tqdm
 
 WEIGHTS_URL = (
     "https://rndml-team-cv.obs.ru-moscow-1.hc.sbercloud.ru/datasets/"
@@ -129,7 +130,7 @@ def track_hands(
     next_id = 0
     output: dict[int, list[Box]] = {}
 
-    for f, dets in enumerate(raw_detections):
+    for f, dets in enumerate(tqdm(raw_detections, desc="Tracking hands")):
         boxes = filter_and_rank_detections(dets, keyboard_bbox, num_hands, conf_threshold)
 
         eligible = [t for t in active if t.missed <= max_disappear_frames]
@@ -187,8 +188,11 @@ def _run_yolo(
     model = load_model(weights_path) if weights_path else load_model()
 
     container = av.open(str(video_path))
+    video_stream = container.streams.video[0]
+    n_frames = video_stream.frames or None  # unknown for some containers/codecs
+
     raw_detections: list[list[tuple[Box, float]]] = []
-    for frame in container.decode(video=0):
+    for frame in tqdm(container.decode(video=0), total=n_frames, desc="Detecting hands (YOLO)"):
         img = frame.to_ndarray(format="bgr24")
         if hands == "top":
             img = img[::-1, ::-1]

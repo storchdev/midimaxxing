@@ -111,6 +111,18 @@ class PickerState:
         return "All points collected -- press Submit to confirm, or u to undo the last point."
 
 
+def _announce_url(url: str) -> str:
+    """Format the "open this URL" message, bold+colored when stderr is a
+    real terminal (plain text if redirected/piped/not a TTY)."""
+    if not sys.stderr.isatty():
+        return f"Keyboard picker: open {url} in your browser (or it should open automatically)"
+    bold, cyan, underline, reset = "\033[1m", "\033[96m", "\033[4m", "\033[0m"
+    return (
+        f"\n{bold}{cyan}➤ Open {underline}{url}{reset}{bold}{cyan} in your browser{reset}\n"
+        f"  (it should open automatically; press u to undo, Enter to submit once done)\n"
+    )
+
+
 def _decode_frame(video_path: PathLike):
     import av
     container = av.open(str(video_path))
@@ -336,7 +348,7 @@ def run_picker_server(
     thread.start()
 
     url = f"http://{host}:{httpd.server_address[1]}/"
-    print(f"Keyboard picker: open {url} (or it should open automatically)", file=sys.stderr)
+    print(_announce_url(url), file=sys.stderr)
     if open_browser:
         try:
             webbrowser.open(url)
