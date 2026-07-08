@@ -101,10 +101,26 @@ def patch_notes(
     min_confirm_frames: int = 3,
     min_shrink_sec: float = 0.05,
     min_note_dur: float = 0.03,
+    release_strategy: str = "last",
 ) -> list[pretty_midi.Note]:
     """Return a new list of notes with offsets shortened wherever the video
     pianoroll shows a confident key-up before the audio-predicted note end.
+
+    The video pianoroll is noisy and can flicker key-down again after an
+    initial key-up before the key is truly released (or vice versa), so a
+    single note can contain several confirmed key-up runs. `release_strategy`
+    picks which one is used as the truncation point:
+      - "last" (default): the last confirmed key-up run before the audio
+        note's own release. This rides out spurious early flickers and only
+        cuts the note short once the video has no more presses left to show.
+        If the video never confirms a key-up (still held when the audio
+        releases), the note is left matching the audio's release.
+      - "first": the first confirmed key-up run, even if the video shows the
+        key going back down afterwards. Kept for backward compatibility /
+        opt-in use.
     """
+    if release_strategy not in ("first", "last"):
+        raise ValueError(f"Unknown release_strategy: {release_strategy!r}")
     lo, hi = visible_keys
     n_frames = video_roll.shape[1]
     patched = []
@@ -130,11 +146,12 @@ def patch_notes(
         if start_frame >= search_end:
             continue
 
-        key_up_frame = _find_confirmed_key_up(
+        key_up_frames = _find_confirmed_key_ups(
             row, start_frame, search_end, min_confirm_frames
         )
-        if key_up_frame is None:
+        if not key_up_frames:
             continue
+        key_up_frame = key_up_frames[0] if release_strategy == "first" else key_up_frames[-1]
 
         candidate_end = key_up_frame / fps + offset
         if candidate_end >= note.end - min_shrink_sec:
@@ -147,22 +164,26 @@ def patch_notes(
     return patched
 
 
-def _find_confirmed_key_up(
+def _find_confirmed_key_ups(
     row: np.ndarray, start_frame: int, search_end: int, min_confirm_frames: int
-) -> int | None:
-    """First frame index >= start_frame where `row` goes False and stays
-    False for at least min_confirm_frames consecutive frames. None if no
-    such run exists before search_end.
+) -> list[int]:
+    """Frame index of the start of each maximal run of False in `row` within
+    [start_frame, search_end) that is at least min_confirm_frames long, in
+    order of occurrence. Empty if no such run exists.
     """
+    key_ups = []
     run_len = 0
+    run_start = None
     for f in range(start_frame, search_end):
         if not row[f]:
+            if run_len == 0:
+                run_start = f
             run_len += 1
             if run_len == min_confirm_frames:
-                return f - min_confirm_frames + 1
+                key_ups.append(run_start)
         else:
             run_len = 0
-    return None
+    return key_ups
 
 
 def patch_midi(
@@ -176,6 +197,7 @@ def patch_midi(
     min_confirm_frames: int,
     min_shrink_sec: float,
     min_note_dur: float,
+    release_strategy: str = "last",
 ) -> None:
     audio_pm = pretty_midi.PrettyMIDI(str(audio_midi_path))
     video_roll = load_video_pianoroll(video_roll_path)
@@ -197,6 +219,7 @@ def patch_midi(
         min_confirm_frames=min_confirm_frames,
         min_shrink_sec=min_shrink_sec,
         min_note_dur=min_note_dur,
+        release_strategy=release_strategy,
     )
 
     n_shortened = sum(
@@ -230,6 +253,13 @@ def main() -> None:
     parser.add_argument("--min-confirm-frames", type=int, default=3)
     parser.add_argument("--min-shrink-sec", type=float, default=0.05)
     parser.add_argument("--min-note-dur", type=float, default=0.03)
+    parser.add_argument("--release-strategy", choices=["first", "last"],
+                        default="last",
+                        help="Which confirmed video key-up to release on when "
+                             "a note has multiple (default: last, i.e. the "
+                             "last release before the audio's own release; "
+                             "'first' releases on the earliest confirmed "
+                             "key-up instead)")
     args = parser.parse_args()
 
     patch_midi(
@@ -243,6 +273,7 @@ def main() -> None:
         min_confirm_frames=args.min_confirm_frames,
         min_shrink_sec=args.min_shrink_sec,
         min_note_dur=args.min_note_dur,
+        release_strategy=args.release_strategy,
     )
 
 

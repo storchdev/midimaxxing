@@ -51,6 +51,45 @@ def test_single_frame_flicker_is_ignored():
     assert patched[0].end == note.end
 
 
+def test_multiple_releases_uses_last_by_default():
+    # Video shows a spurious early release (flicker: up, back down, up again)
+    # before the real release. Default strategy should ride out the flicker
+    # and cut at the last release, not the first.
+    note = pretty_midi.Note(velocity=80, pitch=60, start=0.0, end=3.0)
+    roll = make_roll(n_frames=4 * FPS)
+    press(roll, 60, 0, 1 * FPS)  # down 0.0-1.0s
+    press(roll, 60, int(1.5 * FPS), int(2.0 * FPS))  # re-pressed 1.5-2.0s
+    # released again at 2.0s and stays up
+
+    patched = patch_notes([note], roll, visible_keys=(21, 108))
+
+    assert abs(patched[0].end - 2.0) < 1e-6
+
+
+def test_multiple_releases_first_strategy_uses_earliest():
+    note = pretty_midi.Note(velocity=80, pitch=60, start=0.0, end=3.0)
+    roll = make_roll(n_frames=4 * FPS)
+    press(roll, 60, 0, 1 * FPS)
+    press(roll, 60, int(1.5 * FPS), int(2.0 * FPS))
+
+    patched = patch_notes([note], roll, visible_keys=(21, 108),
+                          release_strategy="first")
+
+    assert abs(patched[0].end - 1.0) < 1e-6
+
+
+def test_still_held_at_audio_release_matches_audio():
+    # Video never confirms a key-up before the audio's own release, so the
+    # patched note should be left matching the audio end exactly.
+    note = pretty_midi.Note(velocity=80, pitch=60, start=0.0, end=2.0)
+    roll = make_roll(n_frames=3 * FPS)
+    press(roll, 60, 0, int(2.0 * FPS) + 5)  # still held past note end
+
+    patched = patch_notes([note], roll, visible_keys=(21, 108))
+
+    assert patched[0].end == note.end
+
+
 def test_note_outside_visible_keys_is_untouched():
     note = pretty_midi.Note(velocity=80, pitch=30, start=0.0, end=3.0)
     roll = make_roll(n_frames=4 * FPS)  # all False, would look oversustained
