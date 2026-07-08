@@ -232,6 +232,7 @@ def prune_notes(
     hold_sec: float = 0.5,
     fallback_sec: float = 2.0,
     min_evidence_frames: int = 3,
+    verbose: bool = False,
 ) -> list[pretty_midi.Note]:
     """Drop whole notes that fall outside the video's hand-reachable key
     range for their entire duration -- a conservative first pass against
@@ -260,6 +261,10 @@ def prune_notes(
         end_frame = int(round((note.end - offset) * fps))
         if should_prune_note(row_idx, start_frame, end_frame, reachable,
                              evidence, min_evidence_frames):
+            if verbose:
+                name = pretty_midi.note_number_to_name(note.pitch)
+                print(f"  pruned: t={note.start:.3f}s  {name} ({note.pitch})  "
+                      f"dur={note.end - note.start:.3f}s")
             continue
 
         kept.append(note)
@@ -283,6 +288,7 @@ def patch_midi(
     prune_hold_sec: float,
     prune_fallback_sec: float,
     min_prune_evidence_frames: int,
+    verbose: bool = False,
 ) -> None:
     audio_pm = pretty_midi.PrettyMIDI(str(audio_midi_path))
     video_roll = load_video_pianoroll(video_roll_path)
@@ -305,6 +311,7 @@ def patch_midi(
             hold_sec=prune_hold_sec,
             fallback_sec=prune_fallback_sec,
             min_evidence_frames=min_prune_evidence_frames,
+            verbose=verbose,
         )
     else:
         survivors = audio_notes
@@ -371,6 +378,8 @@ def main() -> None:
     parser.add_argument("--min-prune-evidence-frames", type=int, default=3,
                         help="Minimum evidence-bearing frames within a note's span "
                              "required before a prune decision is made (default: 3)")
+    parser.add_argument("--verbose", "-v", action="store_true",
+                        help="Print each pruned note's start time, pitch, and duration")
     args = parser.parse_args()
 
     patch_midi(
@@ -389,6 +398,7 @@ def main() -> None:
         prune_hold_sec=args.prune_hold_sec,
         prune_fallback_sec=args.prune_fallback_sec,
         min_prune_evidence_frames=args.min_prune_evidence_frames,
+        verbose=args.verbose,
     )
 
 
