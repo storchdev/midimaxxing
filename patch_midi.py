@@ -16,6 +16,7 @@ from pathlib import Path
 
 import numpy as np
 import pretty_midi
+from scipy.ndimage import binary_dilation
 
 FPS = 30
 LOWEST_PITCH = 21  # A0
@@ -165,6 +166,107 @@ def _find_confirmed_key_up(
     return None
 
 
+def compute_reachable_mask(
+    video_roll: np.ndarray,
+    margin_keys: int,
+    hold_frames: int,
+    fallback_frames: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Derive an approximate "hands could be here" mask from the video
+    pianoroll, without any pixel-level hand detection.
+
+    Returns (reachable, evidence):
+    - reachable[key, frame]: a key within margin_keys semitones of a
+      visually-active key, within hold_frames in time (bridges brief
+      per-key video dropouts). Dilating around each active key individually
+      (rather than an envelope across all active keys) means that when both
+      hands are active far apart at once, the empty register between them
+      is not marked reachable.
+    - evidence[frame]: whether there was ANY video activity nearby in time
+      (any pitch), using a larger fallback window. Frames without evidence
+      mean "unknown", never "nothing reachable".
+    """
+    reach_struct = np.ones((2 * margin_keys + 1, 2 * hold_frames + 1), dtype=bool)
+    reachable = binary_dilation(video_roll, structure=reach_struct)
+
+    any_active = video_roll.any(axis=0, keepdims=True)
+    time_struct = np.ones((1, 2 * fallback_frames + 1), dtype=bool)
+    evidence = binary_dilation(any_active, structure=time_struct)[0]
+
+    return reachable, evidence
+
+
+def should_prune_note(
+    row_idx: int,
+    start_frame: int,
+    end_frame: int,
+    reachable: np.ndarray,
+    evidence: np.ndarray,
+    min_evidence_frames: int,
+) -> bool:
+    """Whether a note should be dropped entirely: true only if there's
+    enough nearby video evidence across the note's whole span, and every
+    evidence-bearing frame says the pitch was unreachable.
+    """
+    n_frames = len(evidence)
+    start_frame = max(0, start_frame)
+    end_frame = min(n_frames, end_frame)
+    if start_frame >= end_frame:
+        return False
+
+    ev = evidence[start_frame:end_frame]
+    if ev.sum() < min_evidence_frames:
+        return False
+
+    reach = reachable[row_idx, start_frame:end_frame]
+    return not reach[ev].any()
+
+
+def prune_notes(
+    audio_notes: list[pretty_midi.Note],
+    video_roll: np.ndarray,
+    visible_keys: tuple[int, int],
+    offset: float = 0.0,
+    fps: int = FPS,
+    margin_keys: int = 6,
+    hold_sec: float = 0.5,
+    fallback_sec: float = 2.0,
+    min_evidence_frames: int = 3,
+) -> list[pretty_midi.Note]:
+    """Drop whole notes that fall outside the video's hand-reachable key
+    range for their entire duration -- a conservative first pass against
+    stray audio-model false positives, run before patch_notes.
+    """
+    lo_key, hi_key = visible_keys
+    hold_frames = max(0, round(hold_sec * fps))
+    fallback_frames = max(hold_frames, round(fallback_sec * fps))
+    reachable, evidence = compute_reachable_mask(
+        video_roll, margin_keys=margin_keys, hold_frames=hold_frames,
+        fallback_frames=fallback_frames,
+    )
+
+    kept = []
+    for note in audio_notes:
+        if not (lo_key <= note.pitch <= hi_key):
+            kept.append(note)  # outside camera crop -- video has no opinion
+            continue
+
+        row_idx = note.pitch - LOWEST_PITCH
+        if not (0 <= row_idx < video_roll.shape[0]):
+            kept.append(note)
+            continue
+
+        start_frame = max(0, int(round((note.start - offset) * fps)))
+        end_frame = int(round((note.end - offset) * fps))
+        if should_prune_note(row_idx, start_frame, end_frame, reachable,
+                             evidence, min_evidence_frames):
+            continue
+
+        kept.append(note)
+
+    return kept
+
+
 def patch_midi(
     audio_midi_path: Path,
     video_roll_path: Path,
@@ -176,6 +278,11 @@ def patch_midi(
     min_confirm_frames: int,
     min_shrink_sec: float,
     min_note_dur: float,
+    prune: bool,
+    prune_margin_keys: int,
+    prune_hold_sec: float,
+    prune_fallback_sec: float,
+    min_prune_evidence_frames: int,
 ) -> None:
     audio_pm = pretty_midi.PrettyMIDI(str(audio_midi_path))
     video_roll = load_video_pianoroll(video_roll_path)
@@ -188,8 +295,25 @@ def patch_midi(
     else:
         print(f"Using manual offset: {offset:.3f}s")
 
+    if prune:
+        survivors = prune_notes(
+            audio_notes,
+            video_roll,
+            visible_keys=visible_keys,
+            offset=offset,
+            margin_keys=prune_margin_keys,
+            hold_sec=prune_hold_sec,
+            fallback_sec=prune_fallback_sec,
+            min_evidence_frames=min_prune_evidence_frames,
+        )
+    else:
+        survivors = audio_notes
+
+    n_pruned = len(audio_notes) - len(survivors)
+    print(f"Pruned {n_pruned}/{len(audio_notes)} notes")
+
     patched = patch_notes(
-        audio_notes,
+        survivors,
         video_roll,
         visible_keys=visible_keys,
         offset=offset,
@@ -200,9 +324,9 @@ def patch_midi(
     )
 
     n_shortened = sum(
-        1 for orig, new in zip(audio_notes, patched) if new.end < orig.end
+        1 for orig, new in zip(survivors, patched) if new.end < orig.end
     )
-    print(f"Shortened {n_shortened}/{len(audio_notes)} notes")
+    print(f"Shortened {n_shortened}/{len(survivors)} notes")
 
     out_pm = pretty_midi.PrettyMIDI()
     inst = pretty_midi.Instrument(program=0)
@@ -230,6 +354,23 @@ def main() -> None:
     parser.add_argument("--min-confirm-frames", type=int, default=3)
     parser.add_argument("--min-shrink-sec", type=float, default=0.05)
     parser.add_argument("--min-note-dur", type=float, default=0.03)
+    parser.add_argument("--prune", action=argparse.BooleanOptionalAction, default=True,
+                        help="Drop whole audio notes outside the video's hand-reachable "
+                             "key range for their entire duration, before release-"
+                             "shortening (default: enabled; use --no-prune to disable)")
+    parser.add_argument("--prune-margin-keys", type=int, default=6,
+                        help="Semitones of slack added around visually-active keys to "
+                             "approximate hand reach (default: 6)")
+    parser.add_argument("--prune-hold-sec", type=float, default=0.5,
+                        help="Temporal window (seconds, each direction) used to bridge "
+                             "brief per-key video dropouts (default: 0.5)")
+    parser.add_argument("--prune-fallback-sec", type=float, default=2.0,
+                        help="Larger fallback window (seconds, each direction) used only "
+                             "to check whether ANY video evidence exists nearby; if none "
+                             "is found even here, the note is kept (default: 2.0)")
+    parser.add_argument("--min-prune-evidence-frames", type=int, default=3,
+                        help="Minimum evidence-bearing frames within a note's span "
+                             "required before a prune decision is made (default: 3)")
     args = parser.parse_args()
 
     patch_midi(
@@ -243,6 +384,11 @@ def main() -> None:
         min_confirm_frames=args.min_confirm_frames,
         min_shrink_sec=args.min_shrink_sec,
         min_note_dur=args.min_note_dur,
+        prune=args.prune,
+        prune_margin_keys=args.prune_margin_keys,
+        prune_hold_sec=args.prune_hold_sec,
+        prune_fallback_sec=args.prune_fallback_sec,
+        min_prune_evidence_frames=args.min_prune_evidence_frames,
     )
 
 

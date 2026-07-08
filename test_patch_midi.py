@@ -1,7 +1,7 @@
 import numpy as np
 import pretty_midi
 
-from patch_midi import FPS, LOWEST_PITCH, estimate_offset, patch_notes
+from patch_midi import FPS, LOWEST_PITCH, estimate_offset, patch_notes, prune_notes
 
 
 def make_roll(n_frames: int, n_keys: int = 88) -> np.ndarray:
@@ -58,6 +58,76 @@ def test_note_outside_visible_keys_is_untouched():
     patched = patch_notes([note], roll, visible_keys=(60, 84))
 
     assert patched[0].end == note.end
+
+
+def test_stray_note_far_from_hands_is_pruned():
+    # Hands are active around middle C the whole clip; a note 40 semitones
+    # away has no video support anywhere nearby.
+    note = pretty_midi.Note(velocity=80, pitch=100, start=0.5, end=1.0)
+    roll = make_roll(n_frames=2 * FPS)
+    press(roll, 60, 0, 2 * FPS)
+
+    pruned = prune_notes([note], roll, visible_keys=(21, 108))
+
+    assert pruned == []
+
+
+def test_note_near_hands_is_kept():
+    note = pretty_midi.Note(velocity=80, pitch=64, start=0.5, end=1.0)  # 4 semitones away
+    roll = make_roll(n_frames=2 * FPS)
+    press(roll, 60, 0, 2 * FPS)
+
+    pruned = prune_notes([note], roll, visible_keys=(21, 108))
+
+    assert len(pruned) == 1
+
+
+def test_note_at_margin_edge_is_kept():
+    # default margin_keys=6 -> pitch 66 (6 semitones from the active key 60)
+    # is exactly at the edge of "reachable", not beyond it.
+    note = pretty_midi.Note(velocity=80, pitch=66, start=0.5, end=1.0)
+    roll = make_roll(n_frames=2 * FPS)
+    press(roll, 60, 0, 2 * FPS)
+
+    pruned = prune_notes([note], roll, visible_keys=(21, 108), margin_keys=6)
+
+    assert len(pruned) == 1
+
+
+def test_prune_is_conservative_with_no_nearby_video_evidence():
+    # Video activity exists, but nowhere near this note's time window --
+    # reachable range is "unknown" here, so the note must be kept even
+    # though it looks just as suspicious as the pruned case above.
+    note = pretty_midi.Note(velocity=80, pitch=100, start=0.5, end=1.0)
+    roll = make_roll(n_frames=10 * FPS)
+    press(roll, 60, 8 * FPS, 9 * FPS)  # only activity is ~7s away
+
+    pruned = prune_notes([note], roll, visible_keys=(21, 108),
+                         hold_sec=0.5, fallback_sec=2.0)
+
+    assert len(pruned) == 1
+
+
+def test_prune_disabled_when_evidence_below_minimum():
+    # Only 1 evidence frame overlaps the note's span -- below
+    # min_evidence_frames=3, so no decision is made and the note is kept.
+    note = pretty_midi.Note(velocity=80, pitch=100, start=0.0, end=1.0)
+    roll = make_roll(n_frames=2 * FPS)
+    press(roll, 60, 0, 1)  # single active frame, far away in pitch
+
+    pruned = prune_notes([note], roll, visible_keys=(21, 108),
+                         hold_sec=0.0, fallback_sec=0.0, min_evidence_frames=3)
+
+    assert len(pruned) == 1
+
+
+def test_prune_note_outside_visible_keys_is_untouched():
+    note = pretty_midi.Note(velocity=80, pitch=30, start=0.0, end=1.0)
+    roll = make_roll(n_frames=2 * FPS)  # all False, would look unreachable
+
+    pruned = prune_notes([note], roll, visible_keys=(60, 84))
+
+    assert len(pruned) == 1
 
 
 def test_estimate_offset_recovers_known_lag():
