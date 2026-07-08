@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import sys
 import threading
 import webbrowser
 from dataclasses import dataclass, field
@@ -133,10 +134,10 @@ _PAGE = """<!doctype html>
 <title>Keyboard picker</title>
 <style>
   html, body { margin: 0; background: #111; color: #eee; font-family: system-ui, sans-serif; }
-  #bar { padding: 10px 14px; font-size: 15px; display: flex; align-items: center; gap: 12px; }
-  #title { flex: 1; }
+  #bar { padding: 10px 14px; font-size: 15px; }
+  #title { margin: 0 0 10px 0; }
   #submit {
-    font-size: 14px; padding: 6px 16px; border-radius: 6px; border: none;
+    display: block; font-size: 14px; padding: 6px 16px; border-radius: 6px; border: none;
     background: #32d74b; color: #062b0c; cursor: pointer;
   }
   #submit:disabled { background: #444; color: #888; cursor: not-allowed; }
@@ -335,7 +336,7 @@ def run_picker_server(
     thread.start()
 
     url = f"http://{host}:{httpd.server_address[1]}/"
-    print(f"Keyboard picker: open {url} (or it should open automatically)")
+    print(f"Keyboard picker: open {url} (or it should open automatically)", file=sys.stderr)
     if open_browser:
         try:
             webbrowser.open(url)
