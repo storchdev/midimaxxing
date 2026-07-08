@@ -85,12 +85,32 @@ def main() -> None:
                          help="video-vs-audio offset in seconds")
     parser.add_argument("--video-pkl", type=Path, default=None,
                          help="video pianoroll .pkl, used to auto-estimate --offset if omitted")
-    parser.add_argument("--num-hands", type=int, default=2)
-    parser.add_argument("--max-disappear-frames", type=int, default=15)
-    parser.add_argument("--reach-margin-px", type=float, default=None)
-    parser.add_argument("--yolo-conf", type=float, default=0.25)
-    parser.add_argument("--max-match-distance-px", type=float, default=None)
-    parser.add_argument("--weights", type=Path, default=None)
+    parser.add_argument("--num-hands", type=int, default=2,
+                         help="Number of hands to track per frame, kept by YOLO "
+                              "confidence (default: 2)")
+    parser.add_argument("--max-disappear-frames", type=int, default=15,
+                         help="Max consecutive frames a tracked hand can go "
+                              "undetected by YOLO and still be linearly "
+                              "interpolated across the gap; beyond this the "
+                              "track expires and those frames have no hand data "
+                              "(default: 15)")
+    parser.add_argument("--reach-margin-px", type=float, default=None,
+                         help="Extra pixels added on each side of a key's x-range "
+                              "when testing hand overlap, to tolerate annotation/"
+                              "detection jitter (default: half the average key "
+                              "width, derived from the keyboard geometry)")
+    parser.add_argument("--yolo-conf", type=float, default=0.25,
+                         help="Minimum YOLO detection confidence to keep a hand "
+                              "box (default: 0.25)")
+    parser.add_argument("--max-match-distance-px", type=float, default=None,
+                         help="Max center-to-center pixel distance allowed when "
+                              "matching a detection to an existing track across "
+                              "frames; farther pairs are treated as unmatched "
+                              "(default: 0.15 * keyboard bbox width)")
+    parser.add_argument("--weights", type=Path, default=None,
+                         help="Path to YOLOv10n hand-detection weights; "
+                              "downloaded automatically to weights/ if omitted "
+                              "and not already cached there")
     args = parser.parse_args()
 
     with open(args.keyboard_geometry) as f:

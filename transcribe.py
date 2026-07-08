@@ -77,15 +77,28 @@ def main():
         "--keyboard-range", nargs=2, default=["A0", "C8"], metavar=("LOW", "HIGH"),
         help="Note-name range of the annotated keyboard (default: A0 C8, full 88-key).",
     )
-    parser.add_argument("--num-hands", type=int, default=2)
+    parser.add_argument("--num-hands", type=int, default=2,
+                         help="Number of hands to track per frame, kept by YOLO "
+                              "confidence (default: 2)")
     parser.add_argument(
         "--no-prune", action="store_true",
         help="Skip the hand-reachability pruning pass before patching.",
     )
-    parser.add_argument("--max-disappear-frames", type=int, default=15)
-    parser.add_argument("--reach-margin-px", type=float, default=None)
-    parser.add_argument("--yolo-conf", type=float, default=0.25)
-    parser.add_argument("--max-match-distance-px", type=float, default=None)
+    parser.add_argument("--max-disappear-frames", type=int, default=15,
+                         help="Max consecutive frames a tracked hand can go "
+                              "undetected by YOLO and still be linearly "
+                              "interpolated across the gap (default: 15)")
+    parser.add_argument("--reach-margin-px", type=float, default=None,
+                         help="Extra pixels of slack added to each key's x-range "
+                              "when testing hand overlap (default: half the "
+                              "average key width, computed by prune_midi.py)")
+    parser.add_argument("--yolo-conf", type=float, default=0.25,
+                         help="Minimum YOLO detection confidence to keep a hand "
+                              "box (default: 0.25)")
+    parser.add_argument("--max-match-distance-px", type=float, default=None,
+                         help="Max center-to-center pixel distance allowed when "
+                              "matching a hand detection to an existing track "
+                              "across frames (default: 0.15 * keyboard bbox width)")
     parser.add_argument(
         "--prune-args",
         nargs=argparse.REMAINDER,

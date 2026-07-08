@@ -77,7 +77,20 @@ The full pipeline runs a hand-reachability pruning pass by default: a YOLO hand-
 
 The keyboard picker collects `--keyboard-range LOW HIGH` (default `A0 C8`, full 88-key) as note names, plus the left edge of every C key, so key positions can be interpolated from pixel coordinates. Geometry is cached to `midi/<stem>_keyboard.json` — delete it to re-annotate.
 
-Relevant flags: `--no-prune` (skip pruning entirely, matching pre-pruning behavior), `--keyboard-range LOW HIGH`, `--num-hands`, `--max-disappear-frames` (how many frames a hand can vanish from YOLO and still be interpolated), `--reach-margin-px`, `--yolo-conf`, `--max-match-distance-px`, `--prune-args` (forwarded to `prune_midi.py`).
+Flags:
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--no-prune` | off | Skip pruning entirely (matches pre-pruning behavior); the keyboard-geometry step is also skipped. |
+| `--keyboard-range LOW HIGH` | `A0 C8` | Note-name range of the annotated keyboard; also forwarded to `patch_midi.py --visible-keys`. |
+| `--num-hands` | `2` | Number of hands to track per frame, kept by YOLO confidence. |
+| `--max-disappear-frames` | `15` | Max consecutive frames a tracked hand can go undetected by YOLO and still be linearly interpolated across the gap; beyond this the track expires and those frames have no hand data (fail-open: notes there are kept). |
+| `--reach-margin-px` | half the average key width | Extra pixels of slack added to each key's x-range when testing hand overlap, to tolerate annotation/detection jitter. |
+| `--yolo-conf` | `0.25` | Minimum YOLO detection confidence to keep a hand box. |
+| `--max-match-distance-px` | `0.15 × keyboard bbox width` | Max center-to-center pixel distance allowed when matching a hand detection to an existing track across frames; farther pairs are treated as unmatched (new/expired track). |
+| `--prune-args ...` | — | Extra arguments forwarded verbatim to `prune_midi.py` (e.g. `--weights path/to.pt`, `--offset 0.5`). |
+
+`--weights` (path to the YOLOv10n hand-detection model) isn't exposed directly on `transcribe.py` — pass it via `--prune-args --weights path/to.pt` (everything after `--prune-args` is forwarded as-is to `prune_midi.py`). If omitted, weights are downloaded automatically to `weights/YOLOv10n_hands.pt` on first use.
 
 ## Other scripts
 
