@@ -71,7 +71,7 @@ Use `--hands top` if the player's hands are at the top of the frame, or `--hands
 
 The bbox is the pixel crop of the piano keys in the video frame (`x1,y1,x2,y2`). If omitted, an interactive picker opens in your browser so you can click the two corners (plus, when pruning is enabled, the left edge of every C key in `--keyboard-range`).
 
-The picker (`keyboard_picker.py`) is a small local web GUI, not a desktop window: it starts a server on `127.0.0.1` and opens a browser tab, so no X11/display is needed on the machine running the pipeline. If you're running over SSH, forward the port instead of opening a browser there, e.g. `ssh -L 8000:localhost:8000 host` then `python keyboard_picker.py video.mp4 --hands top --port 8000 --no-browser` and open `http://localhost:8000` locally. Click to place points, press `u` to undo the last one.
+The picker (`keyboard_picker.py`) is a small local web GUI, not a desktop window: it starts a server on `127.0.0.1` and opens a browser tab, so no X11/display is needed on the machine running the pipeline. If you're running over SSH, forward the port instead of opening a browser there, e.g. `ssh -L 8000:localhost:8000 host` then `python keyboard_picker.py video.mp4 --hands top --port 8000 --no-browser` and open `http://localhost:8000` locally. Click to place points, press `u` to undo the last one. Once every required point is placed, the last one stays visible and a Submit button (or Enter) appears -- nothing is finalized until you submit, and `u` still works right up to that point.
 
 ### Pruning unreachable notes
 

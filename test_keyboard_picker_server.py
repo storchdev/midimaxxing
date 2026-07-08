@@ -1,8 +1,10 @@
 import json
 import threading
+import urllib.error
 import urllib.request
 
 import numpy as np
+import pytest
 
 from keyboard_picker import run_picker_server
 
@@ -31,7 +33,7 @@ def _run_server_in_thread(img, n_markers, **kwargs):
     return t, result
 
 
-def test_server_full_click_and_undo_flow_fixed_port():
+def test_server_last_marker_stays_undoable_until_submit():
     img = (np.random.rand(50, 100, 3) * 255).astype("uint8")
     port = 8731
     t, result = _run_server_in_thread(img, n_markers=2, port=port)
@@ -62,11 +64,54 @@ def test_server_full_click_and_undo_flow_fixed_port():
         s = _post(f"{base}/click", {"x": 30, "y": 0})
         s = _post(f"{base}/click", {"x": 70, "y": 0})
         assert s["done"]
+
+        # Reaching "done" must not auto-finish the picker: the final marker
+        # stays visible/undoable and the server keeps serving until the user
+        # explicitly submits.
+        t.join(timeout=0.2)
+        assert t.is_alive()
+
+        s = _post(f"{base}/undo")
+        assert s["markers"] == [30]
+        assert not s["done"]
+
+        s = _post(f"{base}/click", {"x": 70, "y": 0})
+        assert s["done"]
+
+        s = _post(f"{base}/submit")
+        assert s["done"]
     finally:
         t.join(timeout=5)
     assert not t.is_alive()
     assert result["state"].is_done()
     assert result["state"].markers == [30, 70]
+
+
+def test_server_submit_rejected_until_all_points_collected():
+    img = (np.random.rand(50, 100, 3) * 255).astype("uint8")
+    port = 8733
+    t, result = _run_server_in_thread(img, n_markers=1, port=port)
+
+    base = f"http://127.0.0.1:{port}"
+    try:
+        _wait_for_state(base)
+        _post(f"{base}/click", {"x": 10, "y": 20})
+        _post(f"{base}/click", {"x": 90, "y": 40})  # corners done, markers phase
+
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            _post(f"{base}/submit")
+        assert exc_info.value.code == 400
+
+        t.join(timeout=0.2)
+        assert t.is_alive()
+
+        s = _post(f"{base}/click", {"x": 30, "y": 0})
+        assert s["done"]
+        s = _post(f"{base}/submit")
+        assert s["done"]
+    finally:
+        t.join(timeout=5)
+    assert not t.is_alive()
 
 
 def test_server_bbox_only_mode_zero_markers():
@@ -79,6 +124,11 @@ def test_server_bbox_only_mode_zero_markers():
         state = _wait_for_state(base)
         _post(f"{base}/click", {"x": 1, "y": 1})
         s = _post(f"{base}/click", {"x": 19, "y": 19})
+        assert s["done"]
+
+        t.join(timeout=0.2)
+        assert t.is_alive()
+        s = _post(f"{base}/submit")
         assert s["done"]
     finally:
         t.join(timeout=5)

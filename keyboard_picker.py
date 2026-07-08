@@ -10,6 +10,10 @@ A tiny local HTTP server (stdlib only, no new dependency) serves the frame
 and a single HTML page; clicks are posted back as JSON. This also sidesteps
 needing an interactive matplotlib backend (TkAgg) or X11 -- only a browser is
 required, so it works fine over SSH with a port-forward (`ssh -L 8000:localhost:PORT`).
+Once every required point has been clicked, the last marker/corner stays
+visible and a Submit button (or Enter) becomes active -- nothing is finalized
+until the user explicitly submits, and `u` still undoes the last point even
+after that button appears.
 
 Usage:
     python keyboard_picker.py video.mp4 --hands top
@@ -103,7 +107,7 @@ class PickerState:
         if self.phase == "markers":
             return (f"Click the left edge of each C key, left to right "
                     f"({len(self.markers)}/{self.n_markers})  [u = undo]")
-        return "All points collected -- you can close this tab."
+        return "All points collected -- press Submit to confirm, or u to undo the last point."
 
 
 def _decode_frame(video_path: PathLike):
@@ -129,7 +133,13 @@ _PAGE = """<!doctype html>
 <title>Keyboard picker</title>
 <style>
   html, body { margin: 0; background: #111; color: #eee; font-family: system-ui, sans-serif; }
-  #title { padding: 10px 14px; font-size: 15px; }
+  #bar { padding: 10px 14px; font-size: 15px; display: flex; align-items: center; gap: 12px; }
+  #title { flex: 1; }
+  #submit {
+    font-size: 14px; padding: 6px 16px; border-radius: 6px; border: none;
+    background: #32d74b; color: #062b0c; cursor: pointer;
+  }
+  #submit:disabled { background: #444; color: #888; cursor: not-allowed; }
   #wrap { position: relative; display: inline-block; }
   img { display: block; max-width: 100vw; cursor: crosshair; user-select: none; }
   svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
@@ -138,7 +148,10 @@ _PAGE = """<!doctype html>
 </style>
 </head>
 <body>
-<div id="title">Loading...</div>
+<div id="bar">
+  <div id="title">Loading...</div>
+  <button id="submit" disabled>Submit</button>
+</div>
 <div id="wrap">
   <img id="frame" src="/frame.png">
   <svg id="overlay"></svg>
@@ -147,7 +160,9 @@ _PAGE = """<!doctype html>
 const img = document.getElementById('frame');
 const svg = document.getElementById('overlay');
 const titleEl = document.getElementById('title');
+const submitBtn = document.getElementById('submit');
 let frameW = 1, frameH = 1;
+let submitted = false;
 
 function svgNS(tag) { return document.createElementNS('http://www.w3.org/2000/svg', tag); }
 
@@ -155,6 +170,7 @@ function render(state) {
   frameW = state.frame_width;
   frameH = state.frame_height;
   titleEl.textContent = state.title;
+  submitBtn.disabled = !state.done || submitted;
   svg.innerHTML = '';
   for (const [x, y] of state.corners) {
     const c = svgNS('circle');
@@ -179,20 +195,36 @@ async function refresh() {
 }
 
 img.addEventListener('click', async (e) => {
+  if (submitted) return;
   const rect = img.getBoundingClientRect();
   const x = (e.clientX - rect.left) * (img.naturalWidth / rect.width);
   const y = (e.clientY - rect.top) * (img.naturalHeight / rect.height);
-  await fetch('/click', {
+  const r = await fetch('/click', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({x, y}),
   });
-  refresh();
+  render(await r.json());
 });
 
 document.addEventListener('keydown', async (e) => {
+  if (submitted) return;
   if (e.key === 'u') {
-    await fetch('/undo', {method: 'POST'});
+    const r = await fetch('/undo', {method: 'POST'});
+    render(await r.json());
+  } else if (e.key === 'Enter' && !submitBtn.disabled) {
+    submitBtn.click();
+  }
+});
+
+submitBtn.addEventListener('click', async () => {
+  if (submitBtn.disabled || submitted) return;
+  const r = await fetch('/submit', {method: 'POST'});
+  if (r.ok) {
+    submitted = true;
+    submitBtn.disabled = true;
+    titleEl.textContent = 'Submitted! You can close this tab.';
+  } else {
     refresh();
   }
 });
@@ -251,10 +283,13 @@ def _make_handler(state: PickerState, png_bytes: bytes, frame_w: int, frame_h: i
                 if path == "/click":
                     data = json.loads(raw) if raw else {}
                     state.add_click(float(data["x"]), float(data["y"]))
-                    if state.is_done():
-                        done_event.set()
                 elif path == "/undo":
                     state.undo()
+                elif path == "/submit":
+                    if not state.is_done():
+                        self._send_json({"error": "not all points collected yet"}, 400)
+                        return
+                    done_event.set()
                 else:
                     self._send(b"not found", "text/plain", 404)
                     return
@@ -271,8 +306,15 @@ def run_picker_server(
     port: int = 0,
     open_browser: bool = True,
 ) -> PickerState:
-    """Serve `img` in a local browser tab and block until all points are
-    collected. Returns the completed PickerState (in `img`'s pixel space).
+    """Serve `img` in a local browser tab and block until the user submits.
+
+    Once all required points are clicked, the page shows a Submit button
+    (also triggerable with Enter); the server only shuts down and this
+    returns once the user explicitly submits, so the final point stays
+    visible and `u` can still undo it beforehand. If there is nothing to
+    click at all (`known_bbox` given together with `n_markers == 0`),
+    completes immediately without waiting. Returns the completed PickerState
+    (in `img`'s pixel space).
     """
     h, w = img.shape[0], img.shape[1]
     png_bytes = _encode_png(img)
