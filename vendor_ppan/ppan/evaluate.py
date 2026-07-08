@@ -97,7 +97,7 @@ def evaluate_on_dataset(samples, dataset_name, model_checkpoint, greyscale, batc
         vid_path = Path(vid_path)
         midi_output = Path("./midi")
         midi_output.mkdir(exist_ok=True)
-        mid_output = midi_output/(vid_path.stem + ".mid")
+        mid_output = midi_output/(vid_path.stem + "_video.mid")
         pkl_output = midi_output/(vid_path.stem + ".pkl")
         with open(pkl_output, "wb") as f:
             pickle.dump(pianoroll, f)

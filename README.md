@@ -75,6 +75,6 @@ The bbox is the pixel crop of the piano keys in the video frame (`x1,y1,x2,y2`).
 |---|---|
 | `rundocker.sh` | Starts the ByteDance transcription container. Run once; leave it running. |
 | `audio_transcribe.py` | Audio → MIDI via the Docker container. Called by `transcribe.py` but works standalone: `python audio_transcribe.py input.mp4 [output.mid]` |
-| `vit.py` | Video → per-frame pianoroll via ViT. Saves `midi/<stem>.pkl` and `midi/<stem>.mid`. Usage same as transcribe.py sans `--audio-only`. |
+| `vit.py` | Video → per-frame pianoroll via ViT. Saves `midi/<stem>.pkl` and `midi/<stem>_video.mid`. Usage same as transcribe.py sans `--audio-only`. |
 | `patch_midi.py` | Merges audio MIDI with video pianoroll. Run `python patch_midi.py --help` for options. |
 | `flip180.sh` | Rotates a video 180° for recordings where the camera is upside-down. |
