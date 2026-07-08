@@ -6,7 +6,7 @@ clicks) and prune_midi.py (to turn it into per-pitch pixel ranges).
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 _NOTE_RE = re.compile(r"^([A-Ga-g])([#b]?)(-?\d+)$")
