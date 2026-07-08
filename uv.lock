@@ -818,15 +818,19 @@ dependencies = [
     { name = "ipython" },
     { name = "matplotlib" },
     { name = "numpy" },
-    { name = "nvidia-dali-cuda120" },
-    { name = "ppan" },
     { name = "pretty-midi" },
     { name = "pyfluidsynth" },
     { name = "requests" },
     { name = "scipy" },
-    { name = "timm" },
     { name = "tqdm" },
     { name = "ultralytics" },
+]
+
+[package.optional-dependencies]
+visual = [
+    { name = "nvidia-dali-cuda120" },
+    { name = "ppan" },
+    { name = "timm" },
 ]
 
 [package.dev-dependencies]
@@ -841,16 +845,17 @@ requires-dist = [
     { name = "ipython", specifier = ">=9.15.0" },
     { name = "matplotlib", specifier = ">=3.11.0" },
     { name = "numpy", specifier = ">=2.5.0" },
-    { name = "nvidia-dali-cuda120", specifier = ">=2.2.0" },
-    { name = "ppan", editable = "vendor_ppan" },
+    { name = "nvidia-dali-cuda120", marker = "extra == 'visual'", specifier = ">=2.2.0" },
+    { name = "ppan", marker = "extra == 'visual'", editable = "vendor_ppan" },
     { name = "pretty-midi", specifier = ">=0.2.11" },
     { name = "pyfluidsynth", specifier = ">=1.4.0" },
     { name = "requests", specifier = ">=2.32.5" },
     { name = "scipy", specifier = ">=1.18.0" },
-    { name = "timm", specifier = ">=1.0.27" },
+    { name = "timm", marker = "extra == 'visual'", specifier = ">=1.0.27" },
     { name = "tqdm", specifier = ">=4.68.3" },
     { name = "ultralytics", specifier = ">=8.4.90" },
 ]
+provides-extras = ["visual"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=9.1.1" }]

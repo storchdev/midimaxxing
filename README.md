@@ -11,18 +11,20 @@ If you want the MIDI to sound as close to the original recording as possible (su
 
 ## Requirements
 
-**Platform:** Linux or WSL2. NVIDIA DALI (used for visual inference) does not support Windows or macOS natively.
+**Software:** [Docker](https://docs.docker.com/engine/install/), [uv](https://github.com/astral-sh/uv). The [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) is only needed if you want the audio container to use a GPU.
 
-**Software:** [Docker](https://docs.docker.com/engine/install/) with the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html), [uv](https://github.com/astral-sh/uv).
+Only one stage actually requires an NVIDIA GPU on Linux/WSL2; everything else is plain CPU Python/Docker and runs on any platform they support:
 
-**Hardware:**
+| Stage | Used by | NVIDIA GPU | Linux/WSL2 | Why |
+|---|---|:---:|:---:|---|
+| Visual inference (ViT via NVIDIA DALI) | full pipeline | **Required** | **Required** | DALI's video reader only has a GPU backend and only ships Linux wheels. Installed with `uv sync --extra visual`. |
+| Audio transcription (Docker container) | full, `--audio-only` | Preferred | Preferred | `rundocker.sh` uses `--gpus=all` when it detects a GPU, otherwise starts the container on CPU (CPU support depends on the container image and is untested here). |
+| Hand-reachability pruning | full (unless `--no-prune`) | Optional | No | YOLO hand detection (`ultralytics`) runs fine on CPU, just slower. |
+| Keyboard picker / geometry | full (unless `--no-prune`) | No | No | Local browser GUI + pixel math (stdlib + `av`/`matplotlib`). |
+| MIDI patching | full, output step | No | No | Pure Python (`numpy`, `pretty_midi`). |
+| 180° flip (`--hands bottom`) | full | Optional | No | Uses NVENC automatically if available, otherwise a CPU `ffmpeg` encode. |
 
-| Mode | Requirement |
-|---|---|
-| Full pipeline | NVIDIA GPU — audio container uses `--gpus=all`, visual inference requires CUDA via NVIDIA DALI |
-| Audio-only | NVIDIA GPU for the Docker container; no GPU needed on the host beyond that |
-
-NVENC is used automatically for the 180° flip step if available, but is not required.
+In short: the **full pipeline** needs an NVIDIA GPU on Linux/WSL2 because of visual inference — install its extra deps with `uv sync --extra visual`. **`--audio-only`** has no hard GPU/platform requirement; `uv sync` (no extra) is enough.
 
 ## Quick start
 
@@ -30,8 +32,9 @@ NVENC is used automatically for the 180° flip step if available, but is not req
 # 1. Start the Docker container (keep it running across sessions)
 bash rundocker.sh
 
-# 2. Install visual inference dependencies
-uv sync
+# 2. Install dependencies
+uv sync --extra visual   # full pipeline (needs an NVIDIA GPU on Linux/WSL2)
+uv sync                  # audio-only (no extra deps, any platform)
 
 # 3. Run the full pipeline on a video
 python transcribe.py --hands top videos/my_recording.mp4
@@ -59,7 +62,7 @@ python transcribe.py --hands top video.mp4 --patch-args --offset 0.5
 4. Pruning: drop audio-hallucinated notes no hand could reach → `midi/<stem>_pruned.mid` (skipped with `--no-prune`)
 5. MIDI patching → `midi/<stem>_final.mid`
 
-**Audio-only** produces `midi/<stem>.mid` directly. No GPU or visual dependencies needed beyond `requests`.
+**Audio-only** produces `midi/<stem>.mid` directly. No GPU or visual dependencies needed beyond `requests` (already in the base `uv sync`, no `--extra visual` required).
 
 ### --hands
 

@@ -14,7 +14,7 @@ Usage:
 
 Prerequisites:
     - Docker container already running: bash rundocker.sh
-    - Visual inference deps (full mode only): uv sync
+    - Visual inference deps (full mode only, needs an NVIDIA GPU on Linux/WSL2): uv sync --extra visual
 """
 import argparse
 import json

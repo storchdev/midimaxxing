@@ -10,15 +10,24 @@ dependencies = [
     "ipython>=9.15.0",
     "matplotlib>=3.11.0",
     "numpy>=2.5.0",
-    "nvidia-dali-cuda120>=2.2.0",
-    "ppan",
     "pretty-midi>=0.2.11",
     "pyfluidsynth>=1.4.0",
     "requests>=2.32.5",
     "scipy>=1.18.0",
-    "timm>=1.0.27",
     "tqdm>=4.68.3",
     "ultralytics>=8.4.90",
+]
+
+# Only needed for visual inference (vit.py / --hands, the full pipeline).
+# Pulls in NVIDIA DALI, which only ships Linux wheels and only supports
+# GPU-backed video decoding -- so `uv sync --extra visual` requires an
+# NVIDIA GPU on Linux or WSL2. Audio-only mode and hand-reachability
+# pruning don't need this and run fine on CPU on any platform.
+[project.optional-dependencies]
+visual = [
+    "nvidia-dali-cuda120>=2.2.0",
+    "ppan",
+    "timm>=1.0.27",
 ]
 
 [dependency-groups]
