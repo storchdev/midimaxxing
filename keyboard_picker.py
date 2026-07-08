@@ -1,10 +1,15 @@
-"""Interactive keyboard-geometry picker.
+"""Interactive keyboard-geometry picker: opens a local web GUI in the browser.
 
 Prompts the user to click the two corners of the piano keyboard, plus the
 left edge (x-only) of every C key in the given note range. Always displays
 the frame "hands-bottom" for the annotator, regardless of the video's native
 orientation, then inverse-transforms clicks back into the original video's
 native pixel space before returning.
+
+A tiny local HTTP server (stdlib only, no new dependency) serves the frame
+and a single HTML page; clicks are posted back as JSON. This also sidesteps
+needing an interactive matplotlib backend (TkAgg) or X11 -- only a browser is
+required, so it works fine over SSH with a port-forward (`ssh -L 8000:localhost:PORT`).
 
 Usage:
     python keyboard_picker.py video.mp4 --hands top
@@ -15,21 +20,24 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import io
 import json
-import subprocess
-import sys
+import threading
+import webbrowser
 from dataclasses import dataclass, field
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse
 
-from keyboard_geometry import KeyboardGeometry, c_pitches, flip_bbox_180, flip_point_180
+from keyboard_geometry import KeyboardGeometry, c_pitches
 
 PathLike = str | Path
 
 
 @dataclass
 class PickerState:
-    """Pure state machine for the click sequence, no matplotlib/GUI code.
+    """Pure state machine for the click sequence, no HTTP/GUI code.
 
     Phases:
         "corners" -- collecting the two keyboard bbox corners (or skipped
@@ -89,127 +97,259 @@ class PickerState:
             int(max(x1, x2)), int(max(y1, y2)),
         )
 
-
-_PICKER_SCRIPT = r'''
-import sys, json
-import av
-import matplotlib
-matplotlib.use("TkAgg")
-import matplotlib.pyplot as plt
-
-from keyboard_picker import PickerState
-
-video_path = sys.argv[1]
-hands = sys.argv[2]
-n_markers = int(sys.argv[3])
-known_bbox = json.loads(sys.argv[4]) if sys.argv[4] != "null" else None
-
-container = av.open(video_path)
-vs = container.streams.video[0]
-container.seek(vs.duration // 2, stream=vs)
-frame = next(container.decode(video=0))
-img = frame.to_ndarray(format="rgb24")
-h, w = img.shape[0], img.shape[1]
-
-# Display hands-bottom: if the native video is hands-top, rotate 180 for viewing.
-display_img = img[::-1, ::-1] if hands == "top" else img
-
-state = PickerState(n_markers=n_markers)
-if known_bbox is not None:
-    state.phase = "markers"
-    if n_markers == 0:
-        state.phase = "done"
-
-fig, ax = plt.subplots(figsize=(14, 8))
-ax.imshow(display_img)
-title = "Click TOP-LEFT then BOTTOM-RIGHT of the piano keys"
-if known_bbox is not None:
-    title = f"Click the left edge of each C key, left to right ({n_markers} total)"
-ax.set_title(f"{title}  ({w}x{h})  [u=undo]")
-plt.tight_layout()
-
-artists = []
+    def title(self) -> str:
+        if self.phase == "corners":
+            return f"Click TOP-LEFT then BOTTOM-RIGHT of the piano keys ({len(self.corners)}/2)  [u = undo]"
+        if self.phase == "markers":
+            return (f"Click the left edge of each C key, left to right "
+                    f"({len(self.markers)}/{self.n_markers})  [u = undo]")
+        return "All points collected -- you can close this tab."
 
 
-def redraw_title():
-    if state.phase == "corners":
-        ax.set_title(f"Click TOP-LEFT then BOTTOM-RIGHT of the piano keys ({len(state.corners)}/2)  [u=undo]")
-    elif state.phase == "markers":
-        ax.set_title(f"Click the left edge of each C key, left to right ({len(state.markers)}/{n_markers})  [u=undo]")
-    else:
-        ax.set_title("Done -- close window to continue")
-    fig.canvas.draw_idle()
+def _decode_frame(video_path: PathLike):
+    import av
+    container = av.open(str(video_path))
+    vs = container.streams.video[0]
+    container.seek(vs.duration // 2, stream=vs)
+    frame = next(container.decode(video=0))
+    return frame.to_ndarray(format="rgb24")
 
 
-def on_click(event):
-    if event.inaxes != ax or state.is_done():
-        return
-    x, y = event.xdata, event.ydata
-    if state.phase == "corners":
-        artist = ax.plot(x, y, "ro", markersize=8)[0]
-        artists.append(artist)
-        state.add_click(x, y)
-    elif state.phase == "markers":
-        artist = ax.axvline(x, color="lime", linewidth=1.5)
-        artists.append(artist)
-        state.add_click(x, y)
-    redraw_title()
-    if state.is_done():
-        plt.close("all")
+def _encode_png(img) -> bytes:
+    from matplotlib.image import imsave
+    buf = io.BytesIO()
+    imsave(buf, img, format="png")
+    return buf.getvalue()
 
 
-def on_key(event):
-    if event.key == "u":
-        if artists:
-            artists.pop().remove()
-        state.undo()
-        redraw_title()
+_PAGE = """<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Keyboard picker</title>
+<style>
+  html, body { margin: 0; background: #111; color: #eee; font-family: system-ui, sans-serif; }
+  #title { padding: 10px 14px; font-size: 15px; }
+  #wrap { position: relative; display: inline-block; }
+  img { display: block; max-width: 100vw; cursor: crosshair; user-select: none; }
+  svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+  circle { fill: #ff3b30; stroke: white; stroke-width: 1; }
+  line { stroke: #32d74b; stroke-width: 2; }
+</style>
+</head>
+<body>
+<div id="title">Loading...</div>
+<div id="wrap">
+  <img id="frame" src="/frame.png">
+  <svg id="overlay"></svg>
+</div>
+<script>
+const img = document.getElementById('frame');
+const svg = document.getElementById('overlay');
+const titleEl = document.getElementById('title');
+let frameW = 1, frameH = 1;
 
+function svgNS(tag) { return document.createElementNS('http://www.w3.org/2000/svg', tag); }
 
-fig.canvas.mpl_connect("button_press_event", on_click)
-fig.canvas.mpl_connect("key_press_event", on_key)
-plt.show()
-
-if not state.is_done():
-    sys.exit("Picker closed before all points were collected")
-
-if known_bbox is not None:
-    display_bbox = tuple(known_bbox)
-else:
-    display_bbox = state.bbox()
-
-# Inverse-transform from displayed coordinates back to native video coordinates.
-if hands == "top":
-    x1, y1 = display_bbox[0], display_bbox[1]
-    x2, y2 = display_bbox[2], display_bbox[3]
-    nx1, ny1 = w - 1 - x1, h - 1 - y1
-    nx2, ny2 = w - 1 - x2, h - 1 - y2
-    native_bbox = (min(nx1, nx2), min(ny1, ny2), max(nx1, nx2), max(ny1, ny2))
-    native_markers = [w - 1 - x for x in state.markers]
-else:
-    native_bbox = display_bbox
-    native_markers = list(state.markers)
-
-result = {
-    "bbox": [int(v) for v in native_bbox],
-    "c_marker_xs": native_markers,
-    "frame_width": w,
-    "frame_height": h,
+function render(state) {
+  frameW = state.frame_width;
+  frameH = state.frame_height;
+  titleEl.textContent = state.title;
+  svg.innerHTML = '';
+  for (const [x, y] of state.corners) {
+    const c = svgNS('circle');
+    c.setAttribute('cx', (x / frameW * 100) + '%');
+    c.setAttribute('cy', (y / frameH * 100) + '%');
+    c.setAttribute('r', 6);
+    svg.appendChild(c);
+  }
+  for (const x of state.markers) {
+    const l = svgNS('line');
+    l.setAttribute('x1', (x / frameW * 100) + '%');
+    l.setAttribute('x2', (x / frameW * 100) + '%');
+    l.setAttribute('y1', '0%');
+    l.setAttribute('y2', '100%');
+    svg.appendChild(l);
+  }
 }
-print(json.dumps(result))
-'''
+
+async function refresh() {
+  const r = await fetch('/state');
+  render(await r.json());
+}
+
+img.addEventListener('click', async (e) => {
+  const rect = img.getBoundingClientRect();
+  const x = (e.clientX - rect.left) * (img.naturalWidth / rect.width);
+  const y = (e.clientY - rect.top) * (img.naturalHeight / rect.height);
+  await fetch('/click', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({x, y}),
+  });
+  refresh();
+});
+
+document.addEventListener('keydown', async (e) => {
+  if (e.key === 'u') {
+    await fetch('/undo', {method: 'POST'});
+    refresh();
+  }
+});
+
+refresh();
+</script>
+</body>
+</html>
+"""
 
 
-def _run_picker(video_path: PathLike, hands: str, n_markers: int, known_bbox=None) -> dict:
-    bbox_arg = json.dumps(list(known_bbox)) if known_bbox is not None else "null"
-    result = subprocess.run(
-        [sys.executable, "-c", _PICKER_SCRIPT, str(video_path), hands, str(n_markers), bbox_arg],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        cwd=str(Path(__file__).resolve().parent),
+def _make_handler(state: PickerState, png_bytes: bytes, frame_w: int, frame_h: int,
+                   done_event: threading.Event):
+    lock = threading.Lock()
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, fmt, *a):
+            pass  # silence default access logging
+
+        def _send(self, body: bytes, content_type: str, code: int = 200):
+            self.send_response(code)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _send_json(self, obj, code: int = 200):
+            self._send(json.dumps(obj).encode(), "application/json", code)
+
+        def _state_json(self):
+            return {
+                "corners": state.corners,
+                "markers": state.markers,
+                "done": state.is_done(),
+                "title": state.title(),
+                "frame_width": frame_w,
+                "frame_height": frame_h,
+            }
+
+        def do_GET(self):
+            path = urlparse(self.path).path
+            if path == "/":
+                self._send(_PAGE.encode(), "text/html")
+            elif path == "/frame.png":
+                self._send(png_bytes, "image/png")
+            elif path == "/state":
+                self._send_json(self._state_json())
+            else:
+                self._send(b"not found", "text/plain", 404)
+
+        def do_POST(self):
+            path = urlparse(self.path).path
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b""
+            with lock:
+                if path == "/click":
+                    data = json.loads(raw) if raw else {}
+                    state.add_click(float(data["x"]), float(data["y"]))
+                    if state.is_done():
+                        done_event.set()
+                elif path == "/undo":
+                    state.undo()
+                else:
+                    self._send(b"not found", "text/plain", 404)
+                    return
+            self._send_json(self._state_json())
+
+    return Handler
+
+
+def run_picker_server(
+    img,
+    n_markers: int,
+    known_bbox: tuple[int, int, int, int] | None = None,
+    host: str = "127.0.0.1",
+    port: int = 0,
+    open_browser: bool = True,
+) -> PickerState:
+    """Serve `img` in a local browser tab and block until all points are
+    collected. Returns the completed PickerState (in `img`'s pixel space).
+    """
+    h, w = img.shape[0], img.shape[1]
+    png_bytes = _encode_png(img)
+
+    state = PickerState(n_markers=n_markers)
+    if known_bbox is not None:
+        state.phase = "markers"
+        if n_markers == 0:
+            state.phase = "done"
+
+    done_event = threading.Event()
+    if state.is_done():
+        done_event.set()
+
+    handler_cls = _make_handler(state, png_bytes, w, h, done_event)
+    httpd = HTTPServer((host, port), handler_cls)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+
+    url = f"http://{host}:{httpd.server_address[1]}/"
+    print(f"Keyboard picker: open {url} (or it should open automatically)")
+    if open_browser:
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+    try:
+        done_event.wait()
+    finally:
+        httpd.shutdown()
+        thread.join()
+
+    return state
+
+
+def _pick(
+    video_path: PathLike,
+    hands: str,
+    n_markers: int,
+    known_bbox: tuple[int, int, int, int] | None = None,
+    host: str = "127.0.0.1",
+    port: int = 0,
+    open_browser: bool = True,
+) -> dict:
+    img = _decode_frame(video_path)
+    h, w = img.shape[0], img.shape[1]
+    # Always display hands-bottom: if the native video is hands-top, rotate
+    # 180 for viewing.
+    display_img = img[::-1, ::-1] if hands == "top" else img
+
+    state = run_picker_server(
+        display_img, n_markers, known_bbox=known_bbox,
+        host=host, port=port, open_browser=open_browser,
     )
-    if result.returncode != 0:
-        raise RuntimeError(f"Picker failed:\n{result.stderr.decode()}")
-    return json.loads(result.stdout.decode().strip().split("\n")[-1])
+    if not state.is_done():
+        raise RuntimeError("Picker closed before all points were collected")
+
+    display_bbox = tuple(known_bbox) if known_bbox is not None else state.bbox()
+
+    # Inverse-transform from displayed coordinates back to native video coordinates.
+    if hands == "top":
+        x1, y1, x2, y2 = display_bbox
+        nx1, ny1 = w - 1 - x1, h - 1 - y1
+        nx2, ny2 = w - 1 - x2, h - 1 - y2
+        native_bbox = (min(nx1, nx2), min(ny1, ny2), max(nx1, nx2), max(ny1, ny2))
+        native_markers = [w - 1 - x for x in state.markers]
+    else:
+        native_bbox = display_bbox
+        native_markers = list(state.markers)
+
+    return {
+        "bbox": [int(v) for v in native_bbox],
+        "c_marker_xs": native_markers,
+        "frame_width": w,
+        "frame_height": h,
+    }
 
 
 def pick_keyboard_geometry(
@@ -220,7 +360,7 @@ def pick_keyboard_geometry(
     known_bbox: tuple[int, int, int, int] | None = None,
 ) -> KeyboardGeometry:
     n_markers = len(c_pitches(lowest_note, highest_note))
-    raw = _run_picker(video_path, hands, n_markers, known_bbox=known_bbox)
+    raw = _pick(video_path, hands, n_markers, known_bbox=known_bbox)
     return KeyboardGeometry(
         lowest_note=lowest_note,
         highest_note=highest_note,
@@ -236,7 +376,7 @@ def pick_bbox_only(video_path: PathLike) -> tuple[int, int, int, int]:
     """Bbox-only mode used by vit.py (no C markers, no --hands orientation
     logic since the corners are used exactly as clicked, native video space).
     """
-    raw = _run_picker(video_path, hands="bottom", n_markers=0, known_bbox=None)
+    raw = _pick(video_path, hands="bottom", n_markers=0, known_bbox=None)
     return tuple(raw["bbox"])
 
 
@@ -272,21 +412,34 @@ def main() -> None:
     parser.add_argument("--highest-note", default="C8")
     parser.add_argument("--bbox", default=None, help="x1,y1,x2,y2 -- reduced mode, only C-markers get collected")
     parser.add_argument("--no-markers", action="store_true", help="bbox-only mode, used by vit.py")
+    parser.add_argument("--host", default="127.0.0.1",
+                         help="Interface to bind the picker's local web server to (default: 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=0, help="Port to bind to (default: pick a free one)")
+    parser.add_argument("--no-browser", action="store_true",
+                         help="Don't auto-open a browser tab; just print the URL")
     args = parser.parse_args()
 
     if args.no_markers:
-        bbox = pick_bbox_only(args.video)
-        print(json.dumps({"bbox": list(bbox)}))
+        raw = _pick(args.video, hands="bottom", n_markers=0, known_bbox=None,
+                    host=args.host, port=args.port, open_browser=not args.no_browser)
+        print(json.dumps({"bbox": raw["bbox"]}))
         return
 
     known_bbox = None
     if args.bbox:
         known_bbox = tuple(int(v) for v in args.bbox.split(","))
 
-    geom = pick_keyboard_geometry(
-        args.video, hands=args.hands,
-        lowest_note=args.lowest_note, highest_note=args.highest_note,
-        known_bbox=known_bbox,
+    n_markers = len(c_pitches(args.lowest_note, args.highest_note))
+    raw = _pick(args.video, hands=args.hands, n_markers=n_markers, known_bbox=known_bbox,
+                host=args.host, port=args.port, open_browser=not args.no_browser)
+    geom = KeyboardGeometry(
+        lowest_note=args.lowest_note,
+        highest_note=args.highest_note,
+        bbox=tuple(raw["bbox"]),
+        c_marker_xs=raw["c_marker_xs"],
+        hands=args.hands,
+        frame_width=raw["frame_width"],
+        frame_height=raw["frame_height"],
     )
     print(json.dumps(geometry_to_dict(geom)))
 

@@ -69,7 +69,9 @@ Use `--hands top` if the player's hands are at the top of the frame, or `--hands
 
 ### bbox
 
-The bbox is the pixel crop of the piano keys in the video frame (`x1,y1,x2,y2`). If omitted, an interactive picker opens so you can click the two corners (plus, when pruning is enabled, the left edge of every C key in `--keyboard-range`).
+The bbox is the pixel crop of the piano keys in the video frame (`x1,y1,x2,y2`). If omitted, an interactive picker opens in your browser so you can click the two corners (plus, when pruning is enabled, the left edge of every C key in `--keyboard-range`).
+
+The picker (`keyboard_picker.py`) is a small local web GUI, not a desktop window: it starts a server on `127.0.0.1` and opens a browser tab, so no X11/display is needed on the machine running the pipeline. If you're running over SSH, forward the port instead of opening a browser there, e.g. `ssh -L 8000:localhost:8000 host` then `python keyboard_picker.py video.mp4 --hands top --port 8000 --no-browser` and open `http://localhost:8000` locally. Click to place points, press `u` to undo the last one.
 
 ### Pruning unreachable notes
 
@@ -99,7 +101,7 @@ Flags:
 | `rundocker.sh` | Starts the ByteDance transcription container. Run once; leave it running. |
 | `audio_transcribe.py` | Audio → MIDI via the Docker container. Called by `transcribe.py` but works standalone: `python audio_transcribe.py input.mp4 [output.mid]` |
 | `vit.py` | Video → per-frame pianoroll via ViT. Saves `midi/<stem>.pkl` and `midi/<stem>_video.mid`. Usage same as transcribe.py sans `--audio-only`. |
-| `keyboard_picker.py` | Interactive GUI for the keyboard bbox + C-key markers. `python keyboard_picker.py video.mp4 --hands top`. |
+| `keyboard_picker.py` | Browser-based GUI for the keyboard bbox + C-key markers. `python keyboard_picker.py video.mp4 --hands top`. |
 | `keyboard_geometry.py` | Pure note-name/pixel-geometry math used by the picker and `prune_midi.py`. |
 | `hand_tracker.py` | YOLO hand detection + multi-hand tracking across frames. |
 | `prune_midi.py` | Drops audio-transcribed notes unreachable by any tracked hand. Run `python prune_midi.py --help` for options. |
